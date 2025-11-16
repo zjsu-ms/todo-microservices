@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  # 用户服务数据库
+  user-db:
+    image: mysql:8.4
+    container_name: user-db
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: user_db
+      MYSQL_USER: user_user
+      MYSQL_PASSWORD: user_pass
+    ports:
+      - "3307:3306"
+    volumes:
+      - user-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    networks:
+      - todo-network
+
+  # Todo服务数据库
+  todo-db:
+    image: mysql:8.4
+    container_name: todo-db
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: todo_db
+      MYSQL_USER: todo_user
+      MYSQL_PASSWORD: todo_pass
+    ports:
+      - "3308:3306"
+    volumes:
+      - todo-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    networks:
+      - todo-network
+
+  # 用户服务
+  user-service:
+    build:
+      context: ./user-service
+      dockerfile: Dockerfile
+    container_name: user-service
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:mysql://user-db:3306/user_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      DB_USERNAME: user_user
+      DB_PASSWORD: user_pass
+    ports:
+      - "8081:8081"
+    depends_on:
+      user-db:
+        condition: service_healthy
+    networks:
+      - todo-network
+    restart: unless-stopped
+
+  # Todo服务
+  todo-service:
+    build:
+      context: ./todo-service
+      dockerfile: Dockerfile
+    container_name: todo-service
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:mysql://todo-db:3306/todo_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+      DB_USERNAME: todo_user
+      DB_PASSWORD: todo_pass
+      USER_SERVICE_URL: http://user-service:8081
+    ports:
+      - "8082:8082"
+    depends_on:
+      user-service:
+        condition: service_started
+      todo-db:
+        condition: service_healthy
+    networks:
+      - todo-network
+    restart: unless-stopped
+
+volumes:
+  user-data:
+    driver: local
+  todo-data:
+    driver: local
+
+networks:
+  todo-network:
+    driver: bridge

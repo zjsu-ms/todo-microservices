@@ -191,6 +191,100 @@ todo-microservices/
     └── pom.xml
 ```
 
+## 🌳 Git Subtree 管理
+
+本项目使用 Git Subtree 管理子服务，user-service 和 todo-service 作为独立的 Git 仓库被集成到主项目中。
+
+### 仓库结构
+
+- **主仓库**: `todo-microservices` - 包含 docker-compose 和项目文档
+- **子仓库**:
+  - `user-service` → https://github.com/zjsu-ms/user-service.git
+  - `todo-service` → https://github.com/zjsu-ms/todo-service.git
+
+### 初始化设置（仅首次）
+
+如果您是首次克隆此项目，子服务目录可能为空，需要添加 subtree：
+
+```bash
+cd /path/to/todo-microservices
+
+# 添加 user-service 作为 subtree
+git subtree add --prefix=user-service https://github.com/zjsu-ms/user-service.git main --squash
+
+# 添加 todo-service 作为 subtree
+git subtree add --prefix=todo-service https://github.com/zjsu-ms/todo-service.git main --squash
+```
+
+**注意**：这些命令需要访问 GitHub，如果在国内环境可能需要配置代理。
+
+### 日常开发命令
+
+#### 拉取子项目更新
+
+```bash
+# 从 user-service 远程仓库拉取最新代码
+git subtree pull --prefix=user-service https://github.com/zjsu-ms/user-service.git main --squash
+
+# 从 todo-service 远程仓库拉取最新代码
+git subtree pull --prefix=todo-service https://github.com/zjsu-ms/todo-service.git main --squash
+```
+
+#### 推送子项目更改
+
+当您修改了 user-service 或 todo-service 的代码后：
+
+```bash
+# 推送 user-service 的更改到其远程仓库
+git subtree push --prefix=user-service https://github.com/zjsu-ms/user-service.git main
+
+# 推送 todo-service 的更改到其远程仓库
+git subtree push --prefix=todo-service https://github.com/zjsu-ms/todo-service.git main
+```
+
+### 使用远程别名（可选，简化命令）
+
+为了避免每次都输入完整的 URL，可以配置远程别名：
+
+```bash
+# 添加远程别名
+git remote add user-service-remote https://github.com/zjsu-ms/user-service.git
+git remote add todo-service-remote https://github.com/zjsu-ms/todo-service.git
+
+# 使用别名拉取
+git subtree pull --prefix=user-service user-service-remote main --squash
+git subtree pull --prefix=todo-service todo-service-remote main --squash
+
+# 使用别名推送
+git subtree push --prefix=user-service user-service-remote main
+git subtree push --prefix=todo-service todo-service-remote main
+```
+
+### 工作流建议
+
+1. **修改子服务代码**: 直接在 `user-service/` 或 `todo-service/` 目录下修改
+2. **提交到主仓库**: `git add . && git commit -m "描述"`
+3. **推送到主仓库**: `git push origin main`
+4. **同步到子仓库**: 使用 `git subtree push` 命令推送到对应的子仓库
+
+### 首次推送子项目到 GitHub
+
+如果子服务仓库在其他位置已经存在，需要先推送到 GitHub：
+
+```bash
+# 示例：推送已存在的 user-service
+cd /path/to/existing/user-service
+git remote add origin https://github.com/zjsu-ms/user-service.git
+git push -u origin main
+
+# 示例：推送已存在的 todo-service
+cd /path/to/existing/todo-service
+git remote add origin https://github.com/zjsu-ms/todo-service.git
+git push -u origin main
+```
+
+然后返回主项目使用 `git subtree add` 命令添加。
+
 ## 🔍 服务间通信
 
 todo-service通过HTTP调用user-service验证用户存在性：

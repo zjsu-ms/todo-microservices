@@ -1,0 +1,18 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:mysql://todo-db:3306/todo_db?useSSL=false&serverTimezone=UTC}
+    username: ${DB_USERNAME:todo_user}
+    password: ${DB_PASSWORD:todo_pass}
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+
+# 用户服务地址（Docker环境）
+user-service:
+  url: ${USER_SERVICE_URL:http://user-service:8081}
+
+logging:
+  level:
+    com.zjgsu.todoservice: WARN

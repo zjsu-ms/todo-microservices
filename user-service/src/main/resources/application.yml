@@ -5,6 +5,15 @@ spring:
   application:
     name: user-service
 
+  cloud:
+    compatibility-verifier:
+      enabled: false
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+        namespace: dev
+        group: DEFAULT_GROUP
+
   datasource:
     url: jdbc:mysql://localhost:3306/user_db?useSSL=false&serverTimezone=UTC&characterEncoding=utf8mb4&useUnicode=true
     username: user_user

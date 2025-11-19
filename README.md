@@ -1,13 +1,14 @@
 # Todo 微服务项目
 
-这是将单体todo应用拆分为微服务架构的实践项目。
+这是将单体todo应用拆分为微服务架构的实践项目，集成了Nacos服务注册与发现。
 
 ## 📋 项目说明
 
-本项目将单体todo应用拆分为两个独立的微服务：
+本项目将单体todo应用拆分为两个独立的微服务，并使用Nacos实现服务注册与发现：
 
 - **user-service** (用户服务) - 端口 8081, 数据库 user_db
 - **todo-service** (待办事项服务) - 端口 8082, 数据库 todo_db
+- **nacos** (服务注册中心) - 端口 8848
 
 ## 🏗️ 架构图
 
@@ -20,8 +21,16 @@
           ┌───────▼───────┐      ┌───────▼───────┐
           │ user-service  │      │ todo-service  │
           │   :8081       │◄─────┤   :8082       │
-          └───────┬───────┘ HTTP └───────┬───────┘
-                  │                       │
+          └───────┬───────┘      └───────┬───────┘
+                  │   ▲                   │   ▲
+                  │   │                   │   │
+                  │   └───────┬───────────┘   │
+                  │     注册/发现              │
+                  │   ┌───────▼───────┐       │
+                  │   │    Nacos      │       │
+                  │   │   :8848       │       │
+                  │   └───────────────┘       │
+                  │                           │
           ┌───────▼───────┐      ┌───────▼───────┐
           │   user_db     │      │   todo_db     │
           │   (MySQL)     │      │   (MySQL)     │
@@ -38,7 +47,28 @@
 
 ### 使用 Docker Compose 运行（推荐）
 
-1. **构建JAR包**
+1. **下载Docker镜像（国内加速）**
+
+由于Docker Hub访问较慢，建议使用国内镜像源下载：
+
+```bash
+# 下载MySQL镜像
+docker pull m.daocloud.io/docker.io/library/mysql:8.4
+docker tag m.daocloud.io/docker.io/library/mysql:8.4 mysql:8.4
+
+# 下载Nacos镜像
+docker pull m.daocloud.io/docker.io/nacos/nacos-server:v3.1.0
+docker tag m.daocloud.io/docker.io/nacos/nacos-server:v3.1.0 nacos/nacos-server:v3.1.0
+
+# 下载JRE基础镜像（用于构建服务镜像）
+docker pull m.daocloud.io/docker.io/library/eclipse-temurin:25-jre
+docker tag m.daocloud.io/docker.io/library/eclipse-temurin:25-jre eclipse-temurin:25-jre
+
+# 验证镜像
+docker images | grep -E "mysql|nacos|eclipse-temurin"
+```
+
+2. **构建JAR包**
 
 ```bash
 # 构建user-service
@@ -50,20 +80,29 @@ cd ../todo-service
 ./mvnw clean package -DskipTests
 ```
 
-2. **启动所有服务**
+3. **启动所有服务**
 
 ```bash
 cd ..
 docker-compose up -d --build
 ```
 
-3. **查看服务状态**
+4. **查看服务状态**
 
 ```bash
 docker-compose ps
 ```
 
-4. **查看日志**
+5. **访问Nacos控制台**
+
+打开浏览器访问：http://localhost:8848/nacos
+
+- 用户名：nacos
+- 密码：nacos
+
+在"服务管理" → "服务列表"中可以看到已注册的服务。
+
+6. **查看日志**
 
 ```bash
 # 查看所有日志
@@ -72,9 +111,10 @@ docker-compose logs -f
 # 查看特定服务日志
 docker-compose logs -f user-service
 docker-compose logs -f todo-service
+docker-compose logs -f nacos
 ```
 
-5. **停止服务**
+7. **停止服务**
 
 ```bash
 # 停止所有服务
@@ -93,7 +133,19 @@ CREATE DATABASE user_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE todo_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-2. **启动服务**
+2. **启动Nacos**
+
+```bash
+# 使用Docker启动Nacos
+docker run -d \
+  --name nacos \
+  -p 8848:8848 \
+  -p 9848:9848 \
+  -e MODE=standalone \
+  nacos/nacos-server:v3.1.0
+```
+
+3. **启动服务**
 
 ```bash
 # 终端1：启动user-service
@@ -157,14 +209,22 @@ curl -X POST http://localhost:8082/api/todos \
 | PATCH | `/api/todos/{id}/toggle` | 切换完成状态 |
 | DELETE | `/api/todos/{id}` | 删除Todo |
 
+### Nacos控制台
+
+| URL | 说明 |
+|-----|------|
+| http://localhost:8848/nacos | Nacos控制台（账号：nacos/nacos）|
+
 ## 🔧 技术栈
 
 - **Spring Boot** 3.5.6
+- **Spring Cloud Alibaba** 2023.0.3.2
+- **Nacos** 3.1.0 - 服务注册与发现
 - **Java** 25
 - **Maven** 3.8+
 - **MySQL** 8.4
 - **Docker** & Docker Compose
-- **RestTemplate** - 服务间通信
+- **RestTemplate** + **DiscoveryClient** - 服务间通信
 
 ## 📁 项目结构
 
@@ -287,30 +347,68 @@ git push -u origin main
 
 ## 🔍 服务间通信
 
-todo-service通过HTTP调用user-service验证用户存在性：
+todo-service通过Nacos服务发现调用user-service验证用户存在性：
 
 ```java
 // TodoService.java
-private void verifyUserExists(Long userId) {
-    String url = userServiceUrl + "/api/users/" + userId;
-    try {
-        restTemplate.getForObject(url, Map.class);
-    } catch (HttpClientErrorException.NotFound e) {
-        throw new ResourceNotFoundException("User", userId);
+@Service
+public class TodoService {
+    private final DiscoveryClient discoveryClient;
+    private final RestTemplate restTemplate;
+    private final Random random = new Random();
+
+    private void verifyUserExists(Long userId) {
+        // 从Nacos获取user-service的实例列表
+        List<ServiceInstance> instances =
+            discoveryClient.getInstances("user-service");
+
+        if (instances.isEmpty()) {
+            throw new RuntimeException("No available user-service instances");
+        }
+
+        // 简单负载均衡：随机选择一个实例
+        ServiceInstance instance = instances.get(
+            random.nextInt(instances.size()));
+
+        // 构建URL并调用
+        String url = instance.getUri() + "/api/users/" + userId;
+        try {
+            restTemplate.getForObject(url, Map.class);
+        } catch (HttpClientErrorException.NotFound e) {
+            throw new ResourceNotFoundException("User", userId);
+        }
     }
 }
 ```
 
+### 服务发现的优势
+
+相比硬编码服务地址，使用Nacos服务发现具有以下优势：
+
+| 场景 | 硬编码地址 | Nacos服务发现 |
+|------|-----------|--------------|
+| **扩容** | 需要修改配置并重启 | 新实例自动注册，调用方无感知 |
+| **故障** | 手动切换 | 自动摘除故障节点 |
+| **负载均衡** | 需要额外配置 | 内置支持 |
+| **环境隔离** | 手动维护配置 | 命名空间自动隔离 |
+
 ## 🐛 常见问题
 
-### Q1: 服务间调用失败？
+### Q1: 服务无法注册到Nacos？
 
 检查：
-1. User服务是否已启动？`curl http://localhost:8081/api/users`
-2. Docker网络是否正确？`docker network inspect todo-microservices_todo-network`
-3. 配置的URL是否正确？本地开发使用`http://localhost:8081`，Docker环境使用`http://user-service:8081`
+1. Nacos是否已启动？`curl http://localhost:8848/nacos/`
+2. 服务配置中的`server-addr`是否正确？
+3. Docker环境下是否使用了正确的容器名（nacos而非localhost）
 
-### Q2: 数据库连接失败？
+### Q2: 服务间调用失败？
+
+检查：
+1. 两个服务是否都已注册到Nacos？查看Nacos控制台
+2. 服务名是否正确？（大小写敏感）
+3. Docker网络是否正确？`docker network inspect todo-microservices_todo-network`
+
+### Q3: 数据库连接失败？
 
 ```bash
 # 检查容器状态
@@ -324,7 +422,7 @@ docker-compose logs todo-db
 docker exec -it user-db mysql -u user_user -puser_pass -e "SHOW DATABASES;"
 ```
 
-### Q3: JAR包构建失败？
+### Q4: JAR包构建失败？
 
 ```bash
 # 清理并重新构建
@@ -337,11 +435,11 @@ cd ../todo-service
 
 ## 📝 下一步
 
-拆分完成后，可以考虑以下改进：
+服务注册与发现已完成，可以考虑以下改进：
 
-1. **服务注册与发现**：集成Nacos或Eureka
+1. ~~**服务注册与发现**：集成Nacos~~ ✅ 已完成
 2. **API网关**：添加Spring Cloud Gateway
-3. **配置中心**：使用Nacos Config
+3. **配置中心**：使用Nacos Config集中管理配置
 4. **链路追踪**：集成Sleuth和Zipkin
 5. **熔断降级**：使用Resilience4j
 6. **服务监控**：集成Prometheus和Grafana
@@ -350,5 +448,7 @@ cd ../todo-service
 
 - [拆分方案文档](../todo/SPLITTING.md)
 - [Spring Boot官方文档](https://spring.io/projects/spring-boot)
+- [Nacos官方文档](https://nacos.io/docs/latest/what-is-nacos/)
+- [Spring Cloud Alibaba](https://spring-cloud-alibaba-group.github.io/github-pages/2022/zh-cn/index.html)
 - [Docker Compose官方文档](https://docs.docker.com/compose/)
 - [微服务架构设计模式](https://microservices.io/patterns/index.html)

@@ -4,7 +4,8 @@ import com.zjgsu.todoservice.exception.ResourceNotFoundException;
 import com.zjgsu.todoservice.model.Todo;
 import com.zjgsu.todoservice.repository.TodoRepository;
 import jakarta.annotation.PostConstruct;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cloud.client.ServiceInstance;
+import org.springframework.cloud.client.discovery.DiscoveryClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
@@ -13,22 +14,23 @@ import org.springframework.web.client.RestTemplate;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Random;
 
 /**
  * Todo服务层
- * 使用数据库存储，通过HTTP调用user-service验证用户
+ * 使用数据库存储，通过Nacos服务发现调用user-service验证用户
  */
 @Service
 public class TodoService {
     private final TodoRepository todoRepository;
     private final RestTemplate restTemplate;
+    private final DiscoveryClient discoveryClient;
+    private final Random random = new Random();
 
-    @Value("${user-service.url}")
-    private String userServiceUrl;
-
-    public TodoService(TodoRepository todoRepository, RestTemplate restTemplate) {
+    public TodoService(TodoRepository todoRepository, RestTemplate restTemplate, DiscoveryClient discoveryClient) {
         this.todoRepository = todoRepository;
         this.restTemplate = restTemplate;
+        this.discoveryClient = discoveryClient;
     }
 
     /**
@@ -122,10 +124,21 @@ public class TodoService {
     }
 
     /**
-     * 调用用户服务验证用户是否存在
+     * 通过Nacos服务发现调用用户服务验证用户是否存在
      */
     private void verifyUserExists(Long userId) {
-        String url = userServiceUrl + "/api/users/" + userId;
+        // 从Nacos获取user-service的实例列表
+        List<ServiceInstance> instances = discoveryClient.getInstances("user-service");
+
+        if (instances.isEmpty()) {
+            throw new RuntimeException("No available user-service instances");
+        }
+
+        // 简单负载均衡：随机选择一个实例
+        ServiceInstance instance = instances.get(random.nextInt(instances.size()));
+
+        // 构建URL并调用
+        String url = instance.getUri() + "/api/users/" + userId;
         try {
             restTemplate.getForObject(url, Map.class);
         } catch (HttpClientErrorException.NotFound e) {

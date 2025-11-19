@@ -95,7 +95,7 @@ docker-compose ps
 
 5. **访问Nacos控制台**
 
-打开浏览器访问：http://localhost:8848/nacos
+打开浏览器访问：http://localhost:8080
 
 - 用户名：nacos
 - 密码：nacos
@@ -213,7 +213,7 @@ curl -X POST http://localhost:8082/api/todos \
 
 | URL | 说明 |
 |-----|------|
-| http://localhost:8848/nacos | Nacos控制台（账号：nacos/nacos）|
+| http://localhost:8080 | Nacos控制台（账号：nacos/nacos）|
 
 ## 🔧 技术栈
 

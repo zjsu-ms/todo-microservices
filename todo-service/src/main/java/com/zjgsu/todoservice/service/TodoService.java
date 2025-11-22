@@ -1,36 +1,34 @@
 package com.zjgsu.todoservice.service;
 
+import com.zjgsu.todoservice.client.UserClient;
 import com.zjgsu.todoservice.exception.ResourceNotFoundException;
 import com.zjgsu.todoservice.model.Todo;
 import com.zjgsu.todoservice.repository.TodoRepository;
 import jakarta.annotation.PostConstruct;
-import org.springframework.cloud.client.ServiceInstance;
-import org.springframework.cloud.client.discovery.DiscoveryClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.RestTemplate;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Random;
 
 /**
  * Todo服务层
- * 使用数据库存储，通过Nacos服务发现调用user-service验证用户
+ * 使用数据库存储，通过OpenFeign调用user-service验证用户
  */
 @Service
 public class TodoService {
-    private final TodoRepository todoRepository;
-    private final RestTemplate restTemplate;
-    private final DiscoveryClient discoveryClient;
-    private final Random random = new Random();
+    private static final Logger logger = LoggerFactory.getLogger(TodoService.class);
 
-    public TodoService(TodoRepository todoRepository, RestTemplate restTemplate, DiscoveryClient discoveryClient) {
+    private final TodoRepository todoRepository;
+    private final UserClient userClient;
+
+    public TodoService(TodoRepository todoRepository, UserClient userClient) {
         this.todoRepository = todoRepository;
-        this.restTemplate = restTemplate;
-        this.discoveryClient = discoveryClient;
+        this.userClient = userClient;
     }
 
     /**
@@ -124,26 +122,21 @@ public class TodoService {
     }
 
     /**
-     * 通过Nacos服务发现调用用户服务验证用户是否存在
+     * 通过OpenFeign调用用户服务验证用户是否存在
+     * 集成了负载均衡、熔断和重试机制
      */
     private void verifyUserExists(Long userId) {
-        // 从Nacos获取user-service的实例列表
-        List<ServiceInstance> instances = discoveryClient.getInstances("user-service");
-
-        if (instances.isEmpty()) {
-            throw new RuntimeException("No available user-service instances");
-        }
-
-        // 简单负载均衡：随机选择一个实例
-        ServiceInstance instance = instances.get(random.nextInt(instances.size()));
-
-        // 构建URL并调用
-        String url = instance.getUri() + "/api/users/" + userId;
         try {
-            restTemplate.getForObject(url, Map.class);
+            Map<String, Object> user = userClient.getUser(userId);
+
+            // 检查是否是降级响应
+            if (user.containsKey("fallback") && Boolean.TRUE.equals(user.get("fallback"))) {
+                logger.warn("User service is unavailable, using fallback data for user ID: {}", userId);
+            }
         } catch (HttpClientErrorException.NotFound e) {
             throw new ResourceNotFoundException("User", userId);
         } catch (Exception e) {
+            logger.error("Failed to verify user: {}", e.getMessage());
             throw new RuntimeException("Failed to verify user: " + e.getMessage());
         }
     }

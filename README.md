@@ -2,6 +2,9 @@
 
 这是将单体todo应用拆分为微服务架构的实践项目，集成了Nacos服务注册与发现。
 
+**当前版本**: 1.2.0
+**主要特性**: OpenFeign声明式客户端、LoadBalancer负载均衡、Resilience4j熔断与重试
+
 ## 📋 项目说明
 
 本项目将单体todo应用拆分为两个独立的微服务，并使用Nacos实现服务注册与发现：
@@ -159,11 +162,24 @@ cd todo-service
 
 ## 🧪 测试服务
 
-### 使用测试脚本
+### 使用自动化测试脚本（推荐）
+
+项目提供了全面的自动化测试脚本，测试v1.2.0的所有新特性：
 
 ```bash
 ./test-services.sh
 ```
+
+测试脚本包含以下测试项：
+
+1. **服务状态检查** - 验证Nacos、user-service、todo-service是否运行
+2. **用户服务API测试** - 创建用户、查询用户
+3. **Todo服务API测试** - 创建Todo、查询Todo、切换状态
+4. **OpenFeign服务间通信** - 验证声明式客户端调用
+5. **Nacos服务发现** - 确认服务已正确注册
+6. **Resilience4j熔断器测试** - 停止user-service验证熔断和降级
+7. **重试机制测试** - 验证指数退避重试（3次，500ms起）
+8. **简单负载测试** - 连续创建10个Todo测试稳定性
 
 ### 手动测试
 
@@ -179,10 +195,18 @@ curl -X POST http://localhost:8081/api/users \
 # 测试Todo服务
 curl http://localhost:8082/api/todos
 
-# 创建Todo（关联到用户1）
+# 创建Todo（关联到用户1，会通过OpenFeign验证用户）
 curl -X POST http://localhost:8082/api/todos \
   -H "Content-Type: application/json" \
   -d '{"title":"学习微服务","description":"完成拆分实践","userId":1}'
+
+# 测试熔断器（先停止user-service）
+docker stop user-service
+curl -X POST http://localhost:8082/api/todos \
+  -H "Content-Type: application/json" \
+  -d '{"title":"测试熔断","userId":1}'
+# 观察重试和超时行为（约10秒）
+docker start user-service
 ```
 
 ## 📊 API文档
@@ -218,13 +242,16 @@ curl -X POST http://localhost:8082/api/todos \
 ## 🔧 技术栈
 
 - **Spring Boot** 3.5.6
+- **Spring Cloud** 2024.0.0
 - **Spring Cloud Alibaba** 2023.0.3.2
 - **Nacos** 3.1.0 - 服务注册与发现
+- **OpenFeign** - 声明式HTTP客户端，服务间通信
+- **Spring Cloud LoadBalancer** - 客户端负载均衡
+- **Resilience4j** - 熔断器和重试机制
 - **Java** 25
 - **Maven** 3.8+
 - **MySQL** 8.4
 - **Docker** & Docker Compose
-- **RestTemplate** + **DiscoveryClient** - 服务间通信
 
 ## 📁 项目结构
 
@@ -347,33 +374,49 @@ git push -u origin main
 
 ## 🔍 服务间通信
 
-todo-service通过Nacos服务发现调用user-service验证用户存在性：
+todo-service通过OpenFeign声明式客户端调用user-service验证用户存在性：
 
 ```java
-// TodoService.java
+// UserClient.java - Feign客户端接口
+@FeignClient(
+    name = "user-service",
+    fallback = UserClientFallback.class
+)
+public interface UserClient {
+    @GetMapping("/api/users/{id}")
+    Map<String, Object> getUser(@PathVariable("id") Long id);
+}
+
+// UserClientFallback.java - 降级处理
+@Component
+public class UserClientFallback implements UserClient {
+    @Override
+    public Map<String, Object> getUser(Long id) {
+        logger.warn("User service unavailable, returning fallback for user ID: {}", id);
+
+        Map<String, Object> fallbackUser = new HashMap<>();
+        fallbackUser.put("id", id);
+        fallbackUser.put("username", "默认用户");
+        fallbackUser.put("email", "default@example.com");
+        fallbackUser.put("fallback", true);
+
+        return fallbackUser;
+    }
+}
+
+// TodoService.java - 使用Feign客户端
 @Service
 public class TodoService {
-    private final DiscoveryClient discoveryClient;
-    private final RestTemplate restTemplate;
-    private final Random random = new Random();
+    private final UserClient userClient;
 
     private void verifyUserExists(Long userId) {
-        // 从Nacos获取user-service的实例列表
-        List<ServiceInstance> instances =
-            discoveryClient.getInstances("user-service");
-
-        if (instances.isEmpty()) {
-            throw new RuntimeException("No available user-service instances");
-        }
-
-        // 简单负载均衡：随机选择一个实例
-        ServiceInstance instance = instances.get(
-            random.nextInt(instances.size()));
-
-        // 构建URL并调用
-        String url = instance.getUri() + "/api/users/" + userId;
         try {
-            restTemplate.getForObject(url, Map.class);
+            Map<String, Object> user = userClient.getUser(userId);
+
+            // 检查是否是降级响应
+            if (user.containsKey("fallback") && Boolean.TRUE.equals(user.get("fallback"))) {
+                logger.warn("User service is unavailable, using fallback data");
+            }
         } catch (HttpClientErrorException.NotFound e) {
             throw new ResourceNotFoundException("User", userId);
         }
@@ -381,16 +424,40 @@ public class TodoService {
 }
 ```
 
-### 服务发现的优势
+### OpenFeign的优势
 
-相比硬编码服务地址，使用Nacos服务发现具有以下优势：
+相比手动使用RestTemplate + DiscoveryClient，OpenFeign提供了更优雅的服务调用方式：
 
-| 场景 | 硬编码地址 | Nacos服务发现 |
-|------|-----------|--------------|
-| **扩容** | 需要修改配置并重启 | 新实例自动注册，调用方无感知 |
-| **故障** | 手动切换 | 自动摘除故障节点 |
-| **负载均衡** | 需要额外配置 | 内置支持 |
-| **环境隔离** | 手动维护配置 | 命名空间自动隔离 |
+| 功能特性 | RestTemplate + DiscoveryClient | OpenFeign + LoadBalancer |
+|---------|-------------------------------|-------------------------|
+| **代码风格** | 命令式，需要手动构建URL | 声明式，类似本地方法调用 |
+| **负载均衡** | 需要手动实现（如随机选择） | 自动集成LoadBalancer |
+| **熔断降级** | 需要手动集成Resilience4j | 通过fallback自动支持 |
+| **重试机制** | 需要手动实现 | 自动集成Resilience4j重试 |
+| **代码量** | 约15-20行 | 约5-10行 |
+| **维护性** | 较低，URL拼接易出错 | 高，类型安全，编译时检查 |
+
+### Resilience4j配置
+
+项目集成了熔断器和重试机制：
+
+```yaml
+resilience4j:
+  circuitbreaker:
+    instances:
+      user-service:
+        failure-rate-threshold: 50              # 失败率阈值50%
+        sliding-window-size: 10                 # 滑动窗口10次调用
+        wait-duration-in-open-state: 10s        # 熔断后等待10秒
+
+  retry:
+    instances:
+      user-service:
+        max-attempts: 3                         # 最大重试3次
+        wait-duration: 500ms                    # 重试间隔500ms
+        enable-exponential-backoff: true        # 启用指数退避
+        exponential-backoff-multiplier: 2       # 退避乘数2
+```
 
 ## 🐛 常见问题
 
@@ -435,14 +502,15 @@ cd ../todo-service
 
 ## 📝 下一步
 
-服务注册与发现已完成，可以考虑以下改进：
+服务注册与发现、声明式客户端、熔断降级已完成，可以考虑以下改进：
 
-1. ~~**服务注册与发现**：集成Nacos~~ ✅ 已完成
-2. **API网关**：添加Spring Cloud Gateway
-3. **配置中心**：使用Nacos Config集中管理配置
-4. **链路追踪**：集成Sleuth和Zipkin
-5. **熔断降级**：使用Resilience4j
-6. **服务监控**：集成Prometheus和Grafana
+1. ~~**服务注册与发现**：集成Nacos~~ ✅ 已完成（v1.0.0）
+2. ~~**声明式客户端**：使用OpenFeign替代RestTemplate~~ ✅ 已完成（v1.2.0）
+3. ~~**熔断降级**：使用Resilience4j~~ ✅ 已完成（v1.2.0）
+4. **API网关**：添加Spring Cloud Gateway
+5. **配置中心**：使用Nacos Config集中管理配置
+6. **链路追踪**：集成Sleuth和Zipkin
+7. **服务监控**：集成Prometheus和Grafana
 
 ## 📚 参考资源
 

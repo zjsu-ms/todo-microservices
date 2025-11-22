@@ -1,0 +1,31 @@
+# 第一阶段: 构建
+FROM maven:3.9-eclipse-temurin-25 AS builder
+WORKDIR /build
+
+# 复制pom.xml并下载依赖(利用Docker缓存)
+COPY pom.xml .
+RUN mvn dependency:go-offline -B
+
+# 复制源代码并构建
+COPY src ./src
+RUN mvn clean package -DskipTests
+
+# 第二阶段: 运行
+FROM eclipse-temurin:25-jre
+WORKDIR /app
+
+# 从构建阶段复制JAR文件
+COPY --from=builder /build/target/gateway-service-2.1.0.jar app.jar
+
+# 暴露端口
+EXPOSE 8080
+
+# JVM参数优化
+ENV JAVA_OPTS="-Xmx512m -Xms256m -XX:+UseG1GC"
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD curl -f http://localhost:8080/actuator/health || exit 1
+
+# 启动命令
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]

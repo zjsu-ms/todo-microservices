@@ -2,8 +2,8 @@
 
 这是将单体todo应用拆分为微服务架构的实践项目，集成了Nacos服务注册与发现。
 
-**当前版本**: 2.0.0
-**主要特性**: API Gateway统一入口、JWT身份认证、OpenFeign声明式客户端、LoadBalancer负载均衡、Resilience4j熔断与重试
+**当前版本**: 2.1.0
+**主要特性**: API Gateway统一入口、JWT身份认证、OpenFeign声明式客户端、LoadBalancer负载均衡、Resilience4j熔断与重试、Nacos Config配置中心、动态配置刷新
 
 ## 📋 项目说明
 
@@ -318,7 +318,9 @@ curl -X POST http://localhost:9000/api/todos \
 - **Spring Cloud** 2024.0.0
 - **Spring Cloud Alibaba** 2023.0.3.2
 - **Spring Cloud Gateway** - API网关，统一入口
-- **Nacos** 3.1.0 - 服务注册与发现
+- **Nacos** 3.1.0 - 服务注册与发现、配置中心
+- **Nacos Config** - 集中配置管理，动态配置刷新
+- **Spring Boot Actuator** - 健康检查和监控端点
 - **OpenFeign** - 声明式HTTP客户端，服务间通信
 - **Spring Cloud LoadBalancer** - 客户端负载均衡
 - **Resilience4j** - 熔断器和重试机制
@@ -336,6 +338,7 @@ todo-microservices/
 ├── docker-compose.yml           # Docker编排文件
 ├── test-services.sh             # 测试脚本
 ├── README.md                    # 项目文档
+├── NACOS_CONFIG.md              # Nacos配置中心文档
 │
 ├── gateway-service/             # API网关
 │   ├── src/main/java/com/zjgsu/gateway/
@@ -345,33 +348,42 @@ todo-microservices/
 │   │   └── util/
 │   │       └── JwtUtil.java                  # JWT工具类
 │   ├── src/main/resources/
+│   │   ├── bootstrap.yml                     # Nacos配置启动文件
 │   │   ├── application.yml
 │   │   └── application-prod.yml
 │   ├── Dockerfile
+│   ├── Dockerfile.multistage                 # 多阶段构建
 │   └── pom.xml
 │
 ├── user-service/                # 用户服务
 │   ├── src/main/java/com/zjgsu/user/
 │   │   ├── controller/
 │   │   │   ├── UserController.java
-│   │   │   └── AuthController.java           # 认证控制器
+│   │   │   ├── AuthController.java           # 认证控制器
+│   │   │   └── ConfigController.java         # 配置查询控制器
 │   │   ├── dto/
 │   │   │   ├── LoginRequest.java
 │   │   │   └── LoginResponse.java
 │   │   └── util/
 │   │       └── JwtUtil.java                  # JWT工具类
 │   ├── src/main/resources/
+│   │   ├── bootstrap.yml                     # Nacos配置启动文件
 │   │   ├── application.yml
 │   │   └── application-prod.yml
 │   ├── Dockerfile
+│   ├── Dockerfile.multistage                 # 多阶段构建
 │   └── pom.xml
 │
 └── todo-service/                # Todo服务
     ├── src/main/java/com/zjgsu/todoservice/
+    │   ├── controller/
+    │   │   └── ConfigController.java         # 配置查询控制器
     ├── src/main/resources/
+    │   ├── bootstrap.yml                     # Nacos配置启动文件
     │   ├── application.yml
     │   └── application-prod.yml
     ├── Dockerfile
+    ├── Dockerfile.multistage                 # 多阶段构建
     └── pom.xml
 ```
 
@@ -556,6 +568,123 @@ resilience4j:
         exponential-backoff-multiplier: 2       # 退避乘数2
 ```
 
+## ⚙️ Nacos配置中心
+
+v2.1.0新增了Nacos Config配置中心支持，实现配置的集中管理和动态刷新。
+
+### 核心功能
+
+- **集中管理配置**：所有服务的配置统一在Nacos控制台管理
+- **动态配置刷新**：通过`@RefreshScope`实现配置热更新，无需重启服务
+- **环境隔离**：支持dev、test、prod等多环境配置
+- **配置优先级**：bootstrap.yml → Nacos远程配置 → application.yml → 命令行参数
+
+### 配置架构
+
+```yaml
+# bootstrap.yml - 在application.yml之前加载
+spring:
+  application:
+    name: user-service
+  cloud:
+    nacos:
+      config:
+        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+        file-extension: yaml
+        namespace: ${NACOS_NAMESPACE:dev}  # 环境隔离
+        group: DEFAULT_GROUP
+        refresh-enabled: true               # 启用动态刷新
+      discovery:
+        server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
+
+# 健康检查端点
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,refresh
+```
+
+### 测试配置动态刷新
+
+1. **访问配置接口**查看当前配置：
+
+```bash
+curl http://localhost:8081/api/config/info
+# 返回：
+{
+  "appName": "User Service",
+  "appVersion": "1.0.0",
+  "appDescription": "用户管理微服务",
+  "message": "配置信息来自Nacos配置中心"
+}
+```
+
+2. **在Nacos控制台修改配置**：
+   - 登录 http://localhost:8080
+   - 进入"配置管理" → "配置列表"
+   - 找到`user-service-dev.yaml`
+   - 修改`app.version: 2.1.0`并发布
+
+3. **立即查看配置更新**（无需重启）：
+
+```bash
+curl http://localhost:8081/api/config/info
+# 返回更新后的配置：
+{
+  "appName": "User Service",
+  "appVersion": "2.1.0",  # 已动态更新
+  "appDescription": "用户管理微服务",
+  "message": "配置信息来自Nacos配置中心"
+}
+```
+
+### Nacos配置文件示例
+
+详细的Nacos配置文件模板和配置步骤请参考 [NACOS_CONFIG.md](./NACOS_CONFIG.md)。
+
+**user-service-dev.yaml** 示例：
+
+```yaml
+server:
+  port: 8081
+
+spring:
+  datasource:
+    url: jdbc:mysql://user-db:3306/user_db?useSSL=false&serverTimezone=UTC
+    username: user_user
+    password: user_pass
+
+jwt:
+  secret: your-256-bit-secret-key-here
+  expiration: 86400000
+
+app:
+  name: 用户管理服务
+  version: 2.1.0
+  description: 提供用户管理和JWT认证功能
+```
+
+### 健康检查端点
+
+所有服务都暴露了健康检查端点：
+
+```bash
+# 查看服务健康状态
+curl http://localhost:8081/actuator/health
+
+# 返回详细状态
+{
+  "status": "UP",
+  "components": {
+    "db": {"status": "UP"},
+    "nacosConfig": {"status": "UP"},
+    "nacosDiscovery": {"status": "UP"},
+    "refreshScope": {"status": "UP"}
+  }
+}
+```
+
 ## 🐛 常见问题
 
 ### Q1: 服务无法注册到Nacos？
@@ -599,14 +728,14 @@ cd ../todo-service
 
 ## 📝 下一步
 
-服务注册与发现、声明式客户端、熔断降级、API网关、JWT认证已完成，可以考虑以下改进：
+服务注册与发现、声明式客户端、熔断降级、API网关、JWT认证、配置中心已完成，可以考虑以下改进：
 
 1. ~~**服务注册与发现**：集成Nacos~~ ✅ 已完成（v1.0.0）
 2. ~~**声明式客户端**：使用OpenFeign替代RestTemplate~~ ✅ 已完成（v1.2.0）
 3. ~~**熔断降级**：使用Resilience4j~~ ✅ 已完成（v1.2.0）
 4. ~~**API网关**：添加Spring Cloud Gateway~~ ✅ 已完成（v2.0.0）
 5. ~~**JWT认证**：实现基于Token的身份认证~~ ✅ 已完成（v2.0.0）
-6. **配置中心**：使用Nacos Config集中管理配置
+6. ~~**配置中心**：使用Nacos Config集中管理配置~~ ✅ 已完成（v2.1.0）
 7. **链路追踪**：集成Sleuth和Zipkin
 8. **服务监控**：集成Prometheus和Grafana
 

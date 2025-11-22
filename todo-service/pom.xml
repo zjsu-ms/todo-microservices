@@ -10,7 +10,7 @@
 	</parent>
 	<groupId>com.zjgsu</groupId>
 	<artifactId>todo-service</artifactId>
-	<version>2.0.0</version>
+	<version>2.1.0</version>
 	<name>todo-service</name>
 	<description>Todo Management Microservice</description>
 	<url/>
@@ -47,6 +47,24 @@
 		<dependency>
 			<groupId>com.alibaba.cloud</groupId>
 			<artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+		</dependency>
+
+		<!-- Nacos Config -->
+		<dependency>
+			<groupId>com.alibaba.cloud</groupId>
+			<artifactId>spring-cloud-starter-alibaba-nacos-config</artifactId>
+		</dependency>
+
+		<!-- Bootstrap -->
+		<dependency>
+			<groupId>org.springframework.cloud</groupId>
+			<artifactId>spring-cloud-starter-bootstrap</artifactId>
+		</dependency>
+
+		<!-- Spring Boot Actuator -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-actuator</artifactId>
 		</dependency>
 
 		<!-- OpenFeign for declarative REST client -->

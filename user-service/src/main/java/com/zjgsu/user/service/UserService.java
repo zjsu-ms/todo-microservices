@@ -4,6 +4,8 @@ import com.zjgsu.user.exception.ResourceNotFoundException;
 import com.zjgsu.user.model.User;
 import com.zjgsu.user.repository.UserRepository;
 import jakarta.annotation.PostConstruct;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,9 +19,11 @@ import java.util.Optional;
 @Service
 public class UserService {
     private final UserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
 
     public UserService(UserRepository userRepository) {
         this.userRepository = userRepository;
+        this.passwordEncoder = new BCryptPasswordEncoder();
     }
 
     /**
@@ -29,8 +33,21 @@ public class UserService {
     public void init() {
         // 只在数据库为空时初始化测试数据
         if (userRepository.count() == 0) {
-            createUser(new User(null, "张三", "zhangsan@example.com"));
-            createUser(new User(null, "李四", "lisi@example.com"));
+            User user1 = new User(null, "张三", "zhangsan@example.com");
+            user1.setPassword("password");  // 密码将被加密
+            user1.setRole("USER");
+            createUser(user1);
+
+            User user2 = new User(null, "李四", "lisi@example.com");
+            user2.setPassword("password");
+            user2.setRole("USER");
+            createUser(user2);
+
+            // 创建管理员账号
+            User admin = new User(null, "admin", "admin@example.com");
+            admin.setPassword("admin123");
+            admin.setRole("ADMIN");
+            createUser(admin);
         }
     }
 
@@ -61,6 +78,12 @@ public class UserService {
         if (userRepository.existsByEmail(user.getEmail())) {
             throw new IllegalArgumentException("邮箱已存在: " + user.getEmail());
         }
+
+        // 加密密码
+        if (user.getPassword() != null && !user.getPassword().isEmpty()) {
+            user.setPassword(passwordEncoder.encode(user.getPassword()));
+        }
+
         return userRepository.save(user);
     }
 
@@ -96,5 +119,28 @@ public class UserService {
      */
     public boolean existsById(Long id) {
         return userRepository.existsById(id);
+    }
+
+    /**
+     * 用户认证
+     * @param username 用户名
+     * @param password 密码（明文）
+     * @return 认证成功返回用户对象，失败返回null
+     */
+    public User authenticate(String username, String password) {
+        Optional<User> userOpt = userRepository.findByUsername(username);
+
+        if (userOpt.isEmpty()) {
+            return null;
+        }
+
+        User user = userOpt.get();
+
+        // 验证密码
+        if (passwordEncoder.matches(password, user.getPassword())) {
+            return user;
+        }
+
+        return null;
     }
 }

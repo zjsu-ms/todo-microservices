@@ -1,0 +1,4 @@
+/home/hjw/Dev/github.com/zjsu-ms/todo-microservices/gateway-service/src/main/java/com/zjgsu/gateway/GatewayApplication.java
+/home/hjw/Dev/github.com/zjsu-ms/todo-microservices/gateway-service/src/main/java/com/zjgsu/gateway/filter/JwtAuthenticationFilter.java
+/home/hjw/Dev/github.com/zjsu-ms/todo-microservices/gateway-service/src/main/java/com/zjgsu/gateway/filter/LoggingFilter.java
+/home/hjw/Dev/github.com/zjsu-ms/todo-microservices/gateway-service/src/main/java/com/zjgsu/gateway/util/JwtUtil.java

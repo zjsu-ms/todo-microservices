@@ -3,7 +3,7 @@ FROM eclipse-temurin:25-jre
 WORKDIR /app
 
 # 复制JAR文件
-COPY target/todo-service-1.2.0.jar app.jar
+COPY target/todo-service-2.0.0.jar app.jar
 
 # 暴露端口
 EXPOSE 8082

@@ -29,6 +29,11 @@ spring:
         format_sql: true
         dialect: org.hibernate.dialect.MySQL8Dialect
 
+# JWT配置
+jwt:
+  secret: your-256-bit-secret-key-here-must-be-long-enough-for-HS512-algorithm
+  expiration: 86400000  # 24小时(毫秒)
+
 logging:
   level:
     com.zjgsu.user: INFO

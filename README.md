@@ -2,17 +2,18 @@
 
 这是将单体todo应用拆分为微服务架构的实践项目，集成了Nacos服务注册与发现。
 
-**当前版本**: 2.1.0
-**主要特性**: API Gateway统一入口、JWT身份认证、OpenFeign声明式客户端、LoadBalancer负载均衡、Resilience4j熔断与重试、Nacos Config配置中心、动态配置刷新
+**当前版本**: 2.2.0
+**主要特性**: API Gateway统一入口、JWT身份认证、OpenFeign声明式客户端、LoadBalancer负载均衡、Resilience4j熔断与重试、Nacos Config配置中心、动态配置刷新、RabbitMQ异步消息通信
 
 ## 📋 项目说明
 
-本项目将单体todo应用拆分为微服务架构,并使用Spring Cloud Gateway作为统一入口，通过JWT实现身份认证：
+本项目将单体todo应用拆分为微服务架构,并使用Spring Cloud Gateway作为统一入口，通过JWT实现身份认证，通过RabbitMQ实现服务间异步通信：
 
 - **gateway-service** (API网关) - 端口 9000, 统一入口和JWT认证
 - **user-service** (用户服务) - 端口 8081, 数据库 user_db
 - **todo-service** (待办事项服务) - 端口 8082, 数据库 todo_db
 - **nacos** (服务注册中心) - 端口 8848
+- **rabbitmq** (消息队列) - 端口 5672 (AMQP), 15672 (管理界面)
 
 ## 🏗️ 架构图
 
@@ -320,6 +321,8 @@ curl -X POST http://localhost:9000/api/todos \
 - **Spring Cloud Gateway** - API网关，统一入口
 - **Nacos** 3.1.0 - 服务注册与发现、配置中心
 - **Nacos Config** - 集中配置管理，动态配置刷新
+- **RabbitMQ** 3-management - 异步消息队列，服务解耦
+- **Spring AMQP** - RabbitMQ客户端，消息收发
 - **Spring Boot Actuator** - 健康检查和监控端点
 - **OpenFeign** - 声明式HTTP客户端，服务间通信
 - **Spring Cloud LoadBalancer** - 客户端负载均衡
@@ -728,7 +731,7 @@ cd ../todo-service
 
 ## 📝 下一步
 
-服务注册与发现、声明式客户端、熔断降级、API网关、JWT认证、配置中心已完成，可以考虑以下改进：
+服务注册与发现、声明式客户端、熔断降级、API网关、JWT认证、配置中心、异步消息通信已完成，可以考虑以下改进：
 
 1. ~~**服务注册与发现**：集成Nacos~~ ✅ 已完成（v1.0.0）
 2. ~~**声明式客户端**：使用OpenFeign替代RestTemplate~~ ✅ 已完成（v1.2.0）
@@ -736,8 +739,38 @@ cd ../todo-service
 4. ~~**API网关**：添加Spring Cloud Gateway~~ ✅ 已完成（v2.0.0）
 5. ~~**JWT认证**：实现基于Token的身份认证~~ ✅ 已完成（v2.0.0）
 6. ~~**配置中心**：使用Nacos Config集中管理配置~~ ✅ 已完成（v2.1.0）
-7. **链路追踪**：集成Sleuth和Zipkin
-8. **服务监控**：集成Prometheus和Grafana
+7. **异步消息通信**：集成RabbitMQ实现服务解耦 🔧 部分完成（v2.2.0，见已知问题）
+8. **链路追踪**：集成Sleuth和Zipkin
+9. **服务监控**：集成Prometheus和Grafana
+
+## 🐞 已知问题
+
+### RabbitMQ消息反序列化问题 (v2.2.0)
+
+**问题描述**：user-service 无法正确消费 todo-service 发送的消息。
+
+**错误信息**：
+```
+ClassNotFoundException: com.zjgsu.todoservice.dto.TodoEventMessage
+```
+
+**原因分析**：
+- todo-service 使用 `Jackson2JsonMessageConverter` 发送消息时，会在消息头中包含类型信息（`__TypeId__`）
+- user-service 接收消息时，Jackson 转换器尝试根据类型信息反序列化为 `TodoEventMessage` 类
+- 但 user-service 中不存在 `com.zjgsu.todoservice.dto.TodoEventMessage` 类，导致 ClassNotFoundException
+
+**已尝试的解决方案**（均未生效）：
+1. 设置 `typeMapper.setTrustedPackages("*")` - 仍然尝试加载不存在的类
+2. 设置 `typeMapper.setTypePrecedence(INFERRED)` - 未能阻止类型查找
+
+**可能的解决方案**（待实现）：
+1. **共享DTO模块**：创建独立的 `common-dto` 模块，包含共享的消息类
+2. **移除类型信息**：在发送端配置不包含类型头信息
+3. **使用SimpleMessageConverter**：改用简单字符串消息，接收端手动解析JSON
+
+**当前状态**：
+- ✅ todo-service 成功发送消息到 RabbitMQ
+- ❌ user-service 消费消息失败
 
 ## 📚 参考资源
 

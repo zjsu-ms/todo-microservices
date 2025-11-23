@@ -14,6 +14,20 @@ spring:
         server-addr: ${NACOS_SERVER_ADDR:localhost:8848}
         namespace: ${NACOS_NAMESPACE:dev}
         group: DEFAULT_GROUP
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: 5672
+    username: ${RABBITMQ_USERNAME:admin}
+    password: ${RABBITMQ_PASSWORD:admin123}
+    publisher-confirm-type: correlated  # 开启发送确认
+    publisher-returns: true             # 开启发送失败退回
+    listener:
+      simple:
+        acknowledge-mode: manual        # 手动确认
+        retry:
+          enabled: true
+          max-attempts: 3               # 最多重试3次
+          initial-interval: 2000        # 初始间隔2秒
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev}
 

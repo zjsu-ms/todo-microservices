@@ -1,7 +1,9 @@
 package com.zjgsu.todoservice.service;
 
 import com.zjgsu.todoservice.client.UserClient;
+import com.zjgsu.todoservice.dto.TodoEventMessage;
 import com.zjgsu.todoservice.exception.ResourceNotFoundException;
+import com.zjgsu.todoservice.messaging.TodoEventProducer;
 import com.zjgsu.todoservice.model.Todo;
 import com.zjgsu.todoservice.repository.TodoRepository;
 import jakarta.annotation.PostConstruct;
@@ -18,6 +20,7 @@ import java.util.Optional;
 /**
  * Todo服务层
  * 使用数据库存储，通过OpenFeign调用user-service验证用户
+ * 通过RabbitMQ发送todo事件消息
  */
 @Service
 public class TodoService {
@@ -25,10 +28,12 @@ public class TodoService {
 
     private final TodoRepository todoRepository;
     private final UserClient userClient;
+    private final TodoEventProducer todoEventProducer;
 
-    public TodoService(TodoRepository todoRepository, UserClient userClient) {
+    public TodoService(TodoRepository todoRepository, UserClient userClient, TodoEventProducer todoEventProducer) {
         this.todoRepository = todoRepository;
         this.userClient = userClient;
+        this.todoEventProducer = todoEventProducer;
     }
 
     /**
@@ -73,7 +78,19 @@ public class TodoService {
         if (todo.getUserId() != null) {
             verifyUserExists(todo.getUserId());
         }
-        return todoRepository.save(todo);
+        Todo savedTodo = todoRepository.save(todo);
+
+        // 发送todo创建事件
+        TodoEventMessage message = new TodoEventMessage(
+            savedTodo.getId(),
+            savedTodo.getTitle(),
+            savedTodo.getDescription(),
+            savedTodo.getUserId(),
+            "created"
+        );
+        todoEventProducer.sendTodoCreatedEvent(message);
+
+        return savedTodo;
     }
 
     /**
@@ -95,7 +112,19 @@ public class TodoService {
         existingTodo.setCompleted(todo.getCompleted());
         existingTodo.setUserId(todo.getUserId());
 
-        return todoRepository.save(existingTodo);
+        Todo updatedTodo = todoRepository.save(existingTodo);
+
+        // 发送todo更新事件
+        TodoEventMessage message = new TodoEventMessage(
+            updatedTodo.getId(),
+            updatedTodo.getTitle(),
+            updatedTodo.getDescription(),
+            updatedTodo.getUserId(),
+            "updated"
+        );
+        todoEventProducer.sendTodoUpdatedEvent(message);
+
+        return updatedTodo;
     }
 
     /**
@@ -106,7 +135,22 @@ public class TodoService {
         if (!todoRepository.existsById(id)) {
             throw new ResourceNotFoundException("Todo", id);
         }
+
+        // 在删除前获取todo信息用于发送消息
+        Todo todo = todoRepository.findById(id).orElseThrow();
+
         todoRepository.deleteById(id);
+
+        // 发送todo删除事件
+        TodoEventMessage message = new TodoEventMessage(
+            todo.getId(),
+            todo.getTitle(),
+            todo.getDescription(),
+            todo.getUserId(),
+            "deleted"
+        );
+        todoEventProducer.sendTodoDeletedEvent(message);
+
         return true;
     }
 
@@ -118,7 +162,19 @@ public class TodoService {
         Todo todo = todoRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Todo", id));
         todo.setCompleted(!todo.getCompleted());
-        return todoRepository.save(todo);
+        Todo toggledTodo = todoRepository.save(todo);
+
+        // 发送todo状态切换事件
+        TodoEventMessage message = new TodoEventMessage(
+            toggledTodo.getId(),
+            toggledTodo.getTitle(),
+            toggledTodo.getDescription(),
+            toggledTodo.getUserId(),
+            "toggled"
+        );
+        todoEventProducer.sendTodoToggledEvent(message);
+
+        return toggledTodo;
     }
 
     /**

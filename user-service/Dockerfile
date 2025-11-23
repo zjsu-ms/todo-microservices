@@ -2,7 +2,7 @@ FROM eclipse-temurin:25-jre
 WORKDIR /app
 
 # 复制已构建的JAR文件
-COPY target/user-service-2.1.0.jar app.jar
+COPY target/user-service-2.2.0.jar app.jar
 
 # 暴露端口
 EXPOSE 8081

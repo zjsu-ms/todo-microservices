@@ -6,8 +6,6 @@ spring:
     name: gateway-service
 
   cloud:
-    compatibility-verifier:
-      enabled: false
     nacos:
       discovery:
         server-addr: localhost:8848

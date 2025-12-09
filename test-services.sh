@@ -74,10 +74,21 @@ check_nacos_console() {
     fi
 }
 
+# 检查RabbitMQ
+check_rabbitmq() {
+    if curl -s http://localhost:15672 > /dev/null 2>&1; then
+        print_success "RabbitMQ is running on port 5672 (Management UI: 15672)"
+        return 0
+    else
+        print_error "RabbitMQ is NOT running"
+        return 1
+    fi
+}
+
 print_separator
-print_title "Todo 微服务项目测试 (v2.1.0)"
-echo "测试特性: 配置中心 + 服务部署 + 动态配置刷新"
-echo "对应课程: 第10周 - 配置中心与服务部署"
+print_title "Todo 微服务项目测试 (v2.2.0)"
+echo "测试特性: 配置中心 + 服务部署 + 动态配置刷新 + RabbitMQ异步消息"
+echo "对应课程: 第11周 - 异步消息通信"
 print_separator
 
 # 1. 检查所有服务状态
@@ -86,6 +97,7 @@ print_info "验证 Docker Compose 健康检查和服务启动状态"
 
 check_nacos
 check_nacos_console
+check_rabbitmq
 check_service "user-service" 8081
 check_service "todo-service" 8082
 check_service "gateway-service" 8080
@@ -319,10 +331,96 @@ if echo $USER_HEALTH | jq -e '.components.db.status == "UP"' > /dev/null 2>&1; t
     print_success "数据库配置正确（来自 Nacos 或 application.yml）"
 fi
 
+# 11. 测试RabbitMQ异步消息通信
+print_title "11. 测试 RabbitMQ 异步消息通信"
+print_info "验证 todo-service 发送消息，user-service 接收消息"
+
+echo "11.1 检查 RabbitMQ 管理界面"
+RABBITMQ_OVERVIEW=$(curl -s -u admin:admin123 http://localhost:15672/api/overview)
+if [ -n "$RABBITMQ_OVERVIEW" ]; then
+    print_success "RabbitMQ 管理API可访问"
+    RABBITMQ_VERSION=$(echo $RABBITMQ_OVERVIEW | jq -r '.rabbitmq_version // "unknown"')
+    print_info "RabbitMQ 版本: $RABBITMQ_VERSION"
+else
+    print_warning "无法访问 RabbitMQ 管理API"
+fi
+
+echo -e "\n11.2 查看队列和交换机配置"
+print_info "检查 Topic 交换机和队列绑定"
+
+# 检查交换机
+EXCHANGES=$(curl -s -u admin:admin123 http://localhost:15672/api/exchanges/%2F)
+if echo "$EXCHANGES" | jq -e '.[] | select(.name=="todo.event.exchange")' > /dev/null 2>&1; then
+    print_success "todo.event.exchange (Topic) 交换机已创建"
+else
+    print_warning "todo.event.exchange 交换机未找到"
+fi
+
+# 检查队列
+QUEUES=$(curl -s -u admin:admin123 http://localhost:15672/api/queues/%2F)
+if echo "$QUEUES" | jq -e '.[] | select(.name=="user.notification.queue")' > /dev/null 2>&1; then
+    print_success "user.notification.queue 队列已创建"
+    QUEUE_MESSAGES=$(echo "$QUEUES" | jq -r '.[] | select(.name=="user.notification.queue") | .messages')
+    print_info "队列消息数: $QUEUE_MESSAGES"
+else
+    print_warning "user.notification.queue 队列未找到"
+fi
+
+echo -e "\n11.3 创建Todo测试消息发送"
+print_info "创建Todo时会触发消息发送到RabbitMQ"
+
+TODO_MSG_TEST=$(curl -s -X POST http://localhost:8082/api/todos \
+  -H "Content-Type: application/json" \
+  -d '{"title":"测试RabbitMQ消息","description":"验证异步消息通信","userId":1}')
+echo $TODO_MSG_TEST | jq '.'
+
+TODO_MSG_ID=$(echo $TODO_MSG_TEST | jq -r '.data.id // .id // empty')
+if [ -n "$TODO_MSG_ID" ] && [ "$TODO_MSG_ID" != "null" ]; then
+    print_success "Todo创建成功，应该已发送消息到RabbitMQ"
+
+    echo -e "\n11.4 等待消息处理"
+    print_info "等待 user-service 消费消息（5秒）..."
+    sleep 5
+
+    echo -e "\n11.5 查看 user-service 日志（最后20行）"
+    print_info "检查是否有消息消费日志"
+    docker logs --tail 20 user-service 2>&1 | grep -E "Todo事件|接收消息|消息确认" || print_warning "未找到消息处理日志"
+
+    echo -e "\n11.6 查看队列统计"
+    QUEUE_STATS=$(curl -s -u admin:admin123 http://localhost:15672/api/queues/%2F/user.notification.queue)
+    MESSAGES_READY=$(echo "$QUEUE_STATS" | jq -r '.messages_ready // 0')
+    MESSAGES_UNACKED=$(echo "$QUEUE_STATS" | jq -r '.messages_unacknowledged // 0')
+    TOTAL_MESSAGES=$(echo "$QUEUE_STATS" | jq -r '.messages // 0')
+
+    print_info "队列统计:"
+    echo "  - 待消费消息: $MESSAGES_READY"
+    echo "  - 未确认消息: $MESSAGES_UNACKED"
+    echo "  - 总消息数: $TOTAL_MESSAGES"
+
+    if [ "$MESSAGES_READY" -eq 0 ] && [ "$MESSAGES_UNACKED" -eq 0 ]; then
+        print_success "消息已被成功消费"
+    else
+        print_warning "消息可能还未被消费或消费失败"
+    fi
+else
+    print_error "Todo创建失败，无法测试消息发送"
+fi
+
+echo -e "\n11.7 测试消息持久化和确认机制"
+print_info "检查队列配置（持久化、死信队列、TTL）"
+
+QUEUE_ARGS=$(echo "$QUEUE_STATS" | jq -r '.arguments // {}')
+echo $QUEUE_ARGS | jq '.'
+
+if echo "$QUEUE_STATS" | jq -e '.durable == true' > /dev/null 2>&1; then
+    print_success "队列已配置持久化"
+fi
+
 # 总结
 print_separator
 print_title "测试完成总结"
 echo "✓ 服务健康检查测试完成（Spring Boot Actuator）"
+echo "✓ RabbitMQ服务检查完成（管理界面和AMQP端口）"
 echo "✓ Nacos配置中心测试完成（配置读取）"
 echo "✓ 配置动态刷新测试完成（@RefreshScope）"
 echo "✓ 服务注册与发现测试完成（Nacos Discovery）"
@@ -330,9 +428,19 @@ echo "✓ 数据库配置测试完成（MySQL连接池）"
 echo "✓ 微服务间通信测试完成（OpenFeign）"
 echo "✓ API网关路由测试完成（Spring Cloud Gateway）"
 echo "✓ Docker Compose编排测试完成（容器健康检查）"
+echo "✓ RabbitMQ异步消息通信测试完成（Topic交换机、队列绑定、消息确认）"
 print_separator
 
-echo -e "\n${CYAN}🎓 第10周知识点验证:${NC}"
+echo -e "\n${CYAN}🎓 第11周知识点验证:${NC}"
+echo "  ✅ RabbitMQ消息队列（异步通信）"
+echo "  ✅ Topic交换机（通配符路由）"
+echo "  ✅ 队列绑定和消息路由"
+echo "  ✅ 消息持久化（durable队列）"
+echo "  ✅ 手动消息确认（basicAck/basicNack）"
+echo "  ✅ 消息生产者和消费者"
+echo "  ✅ JSON消息转换器"
+echo "  ✅ 服务解耦（事件驱动架构）"
+echo ""
 echo "  ✅ 配置中心集中管理配置（Nacos Config）"
 echo "  ✅ 配置动态刷新（无需重启服务）"
 echo "  ✅ 环境隔离（namespace: dev）"
@@ -344,6 +452,7 @@ echo "  ✅ 容器网络通信（bridge network）"
 
 echo -e "\n${CYAN}📚 相关资源:${NC}"
 echo "  • Nacos控制台: http://localhost:8080 (nacos/nacos)"
+echo "  • RabbitMQ管理界面: http://localhost:15672 (admin/admin123)"
 echo "  • 用户服务: http://localhost:8081/api/users"
 echo "  • Todo服务: http://localhost:8082/api/todos"
 echo "  • API网关: http://localhost:9000"

@@ -82,7 +82,7 @@ pull_image() {
 # 显示帮助信息
 show_help() {
     cat << EOF
-Todo 微服务项目运行脚本 v2.1.0
+Todo 微服务项目运行脚本 v2.2.0
 
 用法: ./run.sh [选项]
 
@@ -151,6 +151,11 @@ download_images() {
     # 检查并下载Maven构建镜像
     if ! check_image "maven:3.9-eclipse-temurin-25"; then
         pull_image "m.daocloud.io/docker.io/library/maven:3.9-eclipse-temurin-25" "maven:3.9-eclipse-temurin-25"
+    fi
+
+    # 检查并下载RabbitMQ镜像
+    if ! check_image "rabbitmq:3-management"; then
+        pull_image "m.daocloud.io/docker.io/library/rabbitmq:3-management" "rabbitmq:3-management"
     fi
 
     print_success "所有镜像准备完成"
@@ -276,6 +281,13 @@ show_info() {
     echo -e "${CYAN}数据库:${NC}"
     echo -e "  user-db: localhost:3307"
     echo -e "  todo-db: localhost:3308"
+    echo ""
+
+    echo -e "${CYAN}RabbitMQ:${NC}"
+    echo -e "  管理界面: http://localhost:15672"
+    echo -e "  用户名: admin"
+    echo -e "  密码: admin123"
+    echo -e "  AMQP端口: 5672"
     echo ""
 
     echo -e "${CYAN}下一步:${NC}"

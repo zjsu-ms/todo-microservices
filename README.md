@@ -315,9 +315,9 @@ curl -X POST http://localhost:9000/api/todos \
 
 ## 🔧 技术栈
 
-- **Spring Boot** 3.5.6
-- **Spring Cloud** 2024.0.0
-- **Spring Cloud Alibaba** 2023.0.3.2
+- **Spring Boot** 3.5.7
+- **Spring Cloud** 2025.0.0
+- **Spring Cloud Alibaba** 2025.0.0.0
 - **Spring Cloud Gateway** - API网关，统一入口
 - **Nacos** 3.1.0 - 服务注册与发现、配置中心
 - **Nacos Config** - 集中配置管理，动态配置刷新

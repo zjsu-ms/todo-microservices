@@ -1,0 +1,40 @@
+# Prometheus配置文件
+global:
+  scrape_interval: 15s      # 默认抓取间隔
+  evaluation_interval: 15s  # 评估规则间隔
+  external_labels:
+    monitor: 'todo-microservices'
+
+# 抓取配置
+scrape_configs:
+  # Prometheus自身监控
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # 用户服务监控
+  - job_name: 'user-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['user-service:8081']
+        labels:
+          application: 'user-service'
+          service: 'backend'
+
+  # Todo服务监控
+  - job_name: 'todo-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['todo-service:8082']
+        labels:
+          application: 'todo-service'
+          service: 'backend'
+
+  # API网关监控
+  - job_name: 'gateway-service'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['gateway-service:8080']
+        labels:
+          application: 'gateway-service'
+          service: 'gateway'

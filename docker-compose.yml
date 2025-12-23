@@ -91,6 +91,49 @@ services:
     networks:
       - todo-network
 
+  # Zipkin分布式链路追踪
+  zipkin:
+    image: openzipkin/zipkin
+    container_name: zipkin
+    ports:
+      - "9411:9411"
+    networks:
+      - todo-network
+
+  # Prometheus监控系统
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    ports:
+      - "9090:9090"
+    networks:
+      - todo-network
+
+  # Grafana可视化平台
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - todo-network
+
   # 用户服务
   user-service:
     build:
@@ -107,6 +150,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: admin
       RABBITMQ_PASSWORD: admin123
+      MANAGEMENT_ZIPKIN_TRACING_ENDPOINT: http://zipkin:9411/api/v2/spans
     ports:
       - "8081:8081"
     depends_on:
@@ -116,6 +160,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      zipkin:
+        condition: service_started
     networks:
       - todo-network
     restart: unless-stopped
@@ -136,6 +182,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USERNAME: admin
       RABBITMQ_PASSWORD: admin123
+      MANAGEMENT_ZIPKIN_TRACING_ENDPOINT: http://zipkin:9411/api/v2/spans
     ports:
       - "8082:8082"
     depends_on:
@@ -145,6 +192,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      zipkin:
+        condition: service_started
     networks:
       - todo-network
     restart: unless-stopped
@@ -160,11 +209,14 @@ services:
       NACOS_SERVER_ADDR: nacos:8848
       NACOS_NAMESPACE: dev
       JWT_SECRET: your-256-bit-secret-key-here-must-be-long-enough-for-HS512-algorithm
+      MANAGEMENT_ZIPKIN_TRACING_ENDPOINT: http://zipkin:9411/api/v2/spans
     ports:
       - "9000:8080"
     depends_on:
       nacos:
         condition: service_healthy
+      zipkin:
+        condition: service_started
     networks:
       - todo-network
     restart: unless-stopped
@@ -173,6 +225,10 @@ volumes:
   user-data:
     driver: local
   todo-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
     driver: local
 
 networks:

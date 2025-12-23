@@ -86,9 +86,9 @@ check_rabbitmq() {
 }
 
 print_separator
-print_title "Todo 微服务项目测试 (v2.2.0)"
-echo "测试特性: 配置中心 + 服务部署 + 动态配置刷新 + RabbitMQ异步消息"
-echo "对应课程: 第11周 - 异步消息通信"
+print_title "Todo 微服务项目测试 (v2.3.0)"
+echo "测试特性: 配置中心 + 服务部署 + 动态配置刷新 + RabbitMQ异步消息 + 监控与链路追踪"
+echo "对应课程: 第13周 - 服务监控与链路追踪"
 print_separator
 
 # 1. 检查所有服务状态
@@ -101,6 +101,26 @@ check_rabbitmq
 check_service "user-service" 8081
 check_service "todo-service" 8082
 check_service "gateway-service" 8080
+
+# 检查监控和追踪服务
+print_info "检查监控和链路追踪服务"
+if curl -s http://localhost:9411/health > /dev/null 2>&1; then
+    print_success "Zipkin is running on port 9411"
+else
+    print_warning "Zipkin is NOT running"
+fi
+
+if curl -s http://localhost:9090/-/healthy > /dev/null 2>&1; then
+    print_success "Prometheus is running on port 9090"
+else
+    print_warning "Prometheus is NOT running"
+fi
+
+if curl -s http://localhost:3000/api/health > /dev/null 2>&1; then
+    print_success "Grafana is running on port 3000"
+else
+    print_warning "Grafana is NOT running"
+fi
 
 # 2. 检查详细健康状态
 print_title "2. 检查服务健康检查端点"
@@ -416,6 +436,144 @@ if echo "$QUEUE_STATS" | jq -e '.durable == true' > /dev/null 2>&1; then
     print_success "队列已配置持久化"
 fi
 
+# 12. 测试Prometheus指标采集
+print_title "12. 测试 Prometheus 指标采集"
+print_info "验证 Actuator Prometheus 端点暴露和自定义业务指标"
+
+echo "12.1 检查 user-service Prometheus 端点"
+USER_METRICS=$(curl -s http://localhost:8081/actuator/prometheus)
+
+if [ -n "$USER_METRICS" ]; then
+    print_success "user-service Prometheus端点可访问"
+
+    echo -e "\n12.2 检查自定义业务指标"
+    # 检查用户创建指标
+    if echo "$USER_METRICS" | grep -q "users_created_total"; then
+        print_success "发现自定义指标: users_created_total"
+        USERS_CREATED=$(echo "$USER_METRICS" | grep "users_created_total" | grep -v "#" | awk '{print $2}')
+        print_info "用户创建总数: $USERS_CREATED"
+    fi
+
+    # 检查认证成功指标
+    if echo "$USER_METRICS" | grep -q "auth_success_total"; then
+        print_success "发现自定义指标: auth_success_total"
+    fi
+
+    # 检查JVM指标
+    if echo "$USER_METRICS" | grep -q "jvm_memory_used_bytes"; then
+        print_success "发现JVM内存指标: jvm_memory_used_bytes"
+    fi
+else
+    print_error "无法访问 user-service Prometheus端点"
+fi
+
+echo -e "\n12.3 检查 todo-service Prometheus 端点"
+TODO_METRICS=$(curl -s http://localhost:8082/actuator/prometheus)
+
+if [ -n "$TODO_METRICS" ]; then
+    print_success "todo-service Prometheus端点可访问"
+
+    # 检查todo创建指标
+    if echo "$TODO_METRICS" | grep -q "todos_created_total"; then
+        print_success "发现自定义指标: todos_created_total"
+        TODOS_CREATED=$(echo "$TODO_METRICS" | grep "todos_created_total" | grep -v "#" | awk '{print $2}')
+        print_info "Todo创建总数: $TODOS_CREATED"
+    fi
+
+    # 检查todo完成指标
+    if echo "$TODO_METRICS" | grep -q "todos_completed_total"; then
+        print_success "发现自定义指标: todos_completed_total"
+    fi
+fi
+
+echo -e "\n12.4 检查 Prometheus 抓取配置"
+PROM_TARGETS=$(curl -s http://localhost:9090/api/v1/targets 2>/dev/null)
+
+if [ -n "$PROM_TARGETS" ]; then
+    print_success "Prometheus targets API可访问"
+
+    # 检查各个服务是否被Prometheus抓取
+    if echo "$PROM_TARGETS" | jq -e '.data.activeTargets[] | select(.labels.job=="user-service")' > /dev/null 2>&1; then
+        print_success "user-service 已被Prometheus监控"
+    fi
+
+    if echo "$PROM_TARGETS" | jq -e '.data.activeTargets[] | select(.labels.job=="todo-service")' > /dev/null 2>&1; then
+        print_success "todo-service 已被Prometheus监控"
+    fi
+
+    if echo "$PROM_TARGETS" | jq -e '.data.activeTargets[] | select(.labels.job=="gateway-service")' > /dev/null 2>&1; then
+        print_success "gateway-service 已被Prometheus监控"
+    fi
+fi
+
+# 13. 测试Zipkin链路追踪
+print_title "13. 测试 Zipkin 分布式链路追踪"
+print_info "验证服务间调用的TraceId和SpanId传播"
+
+echo "13.1 创建Todo触发服务间调用"
+print_info "todo-service会通过OpenFeign调用user-service，产生分布式链路"
+
+TRACE_TODO=$(curl -s -X POST http://localhost:8082/api/todos \
+  -H "Content-Type: application/json" \
+  -d '{"title":"测试链路追踪","description":"验证Zipkin集成","userId":1}')
+
+TRACE_TODO_ID=$(echo $TRACE_TODO | jq -r '.data.id // .id // empty')
+
+if [ -n "$TRACE_TODO_ID" ] && [ "$TRACE_TODO_ID" != "null" ]; then
+    print_success "Todo创建成功，ID: $TRACE_TODO_ID"
+
+    echo -e "\n13.2 等待链路数据上报到Zipkin"
+    print_info "等待5秒让trace数据异步上报..."
+    sleep 5
+
+    echo -e "\n13.3 查询Zipkin中的调用链路"
+    # 获取最近的traces
+    TRACES=$(curl -s "http://localhost:9411/api/v2/traces?serviceName=todo-service&limit=10")
+
+    if [ -n "$TRACES" ] && [ "$TRACES" != "[]" ]; then
+        print_success "Zipkin中发现调用链路"
+
+        # 统计trace数量
+        TRACE_COUNT=$(echo "$TRACES" | jq '. | length')
+        print_info "最近的trace数量: $TRACE_COUNT"
+
+        # 分析最新的trace
+        LATEST_TRACE=$(echo "$TRACES" | jq '.[0]')
+        TRACE_ID=$(echo "$LATEST_TRACE" | jq -r '.[0].traceId')
+        SPAN_COUNT=$(echo "$LATEST_TRACE" | jq '. | length')
+
+        print_success "TraceID: $TRACE_ID"
+        print_success "Span数量: $SPAN_COUNT (包含服务间调用)"
+
+        # 列出trace中的服务
+        echo -e "\n13.4 分析服务调用链路"
+        SERVICES=$(echo "$LATEST_TRACE" | jq -r '.[].localEndpoint.serviceName' | sort -u)
+        print_info "参与的服务:"
+        echo "$SERVICES" | while read service; do
+            echo "  - $service"
+        done
+
+        # 检查是否包含跨服务调用
+        if echo "$SERVICES" | grep -q "todo-service" && echo "$SERVICES" | grep -q "user-service"; then
+            print_success "检测到跨服务调用: todo-service → user-service"
+        fi
+    else
+        print_warning "Zipkin中未找到调用链路，可能数据还未上报"
+    fi
+else
+    print_error "Todo创建失败，无法测试链路追踪"
+fi
+
+echo -e "\n13.5 检查日志中的TraceId"
+print_info "查看服务日志中的TraceId和SpanId"
+docker logs --tail 20 todo-service 2>&1 | grep -E "\[todo-service,[a-f0-9]{16},[a-f0-9]{16}\]" | head -3
+
+if docker logs --tail 50 todo-service 2>&1 | grep -qE "\[todo-service,[a-f0-9]{16},[a-f0-9]{16}\]"; then
+    print_success "服务日志中包含TraceId和SpanId"
+else
+    print_warning "服务日志中未找到TraceId（可能格式不匹配）"
+fi
+
 # 总结
 print_separator
 print_title "测试完成总结"
@@ -429,9 +587,22 @@ echo "✓ 微服务间通信测试完成（OpenFeign）"
 echo "✓ API网关路由测试完成（Spring Cloud Gateway）"
 echo "✓ Docker Compose编排测试完成（容器健康检查）"
 echo "✓ RabbitMQ异步消息通信测试完成（Topic交换机、队列绑定、消息确认）"
+echo "✓ Prometheus指标采集测试完成（Actuator端点、自定义指标）"
+echo "✓ Zipkin链路追踪测试完成（TraceId传播、服务调用链路分析）"
 print_separator
 
-echo -e "\n${CYAN}🎓 第11周知识点验证:${NC}"
+echo -e "\n${CYAN}🎓 第13周知识点验证:${NC}"
+echo "  ✅ Prometheus监控（指标采集和查询）"
+echo "  ✅ Grafana可视化（Dashboard配置）"
+echo "  ✅ 自定义业务指标（Counter、Timer）"
+echo "  ✅ Spring Boot Actuator（健康检查和指标暴露）"
+echo "  ✅ Micrometer集成（Prometheus格式导出）"
+echo "  ✅ Zipkin分布式链路追踪（TraceId和SpanId）"
+echo "  ✅ 链路数据上报（HTTP Reporter）"
+echo "  ✅ 服务调用链分析（依赖关系图）"
+echo "  ✅ 日志关联（TraceId注入日志）"
+echo ""
+echo "  ✅ 配置中心集中管理配置（Nacos Config）"
 echo "  ✅ RabbitMQ消息队列（异步通信）"
 echo "  ✅ Topic交换机（通配符路由）"
 echo "  ✅ 队列绑定和消息路由"
@@ -453,6 +624,9 @@ echo "  ✅ 容器网络通信（bridge network）"
 echo -e "\n${CYAN}📚 相关资源:${NC}"
 echo "  • Nacos控制台: http://localhost:8080 (nacos/nacos)"
 echo "  • RabbitMQ管理界面: http://localhost:15672 (admin/admin123)"
+echo "  • Zipkin链路追踪: http://localhost:9411"
+echo "  • Prometheus监控: http://localhost:9090"
+echo "  • Grafana Dashboard: http://localhost:3000 (admin/admin)"
 echo "  • 用户服务: http://localhost:8081/api/users"
 echo "  • Todo服务: http://localhost:8082/api/todos"
 echo "  • API网关: http://localhost:9000"

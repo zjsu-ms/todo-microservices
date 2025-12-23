@@ -3,6 +3,9 @@ package com.zjgsu.user.service;
 import com.zjgsu.user.exception.ResourceNotFoundException;
 import com.zjgsu.user.model.User;
 import com.zjgsu.user.repository.UserRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import jakarta.annotation.PostConstruct;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -20,10 +23,45 @@ import java.util.Optional;
 public class UserService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final MeterRegistry meterRegistry;
 
-    public UserService(UserRepository userRepository) {
+    // 自定义业务指标
+    private final Counter userCreatedCounter;
+    private final Counter userDeletedCounter;
+    private final Counter authSuccessCounter;
+    private final Counter authFailureCounter;
+    private final Timer userQueryTimer;
+
+    public UserService(UserRepository userRepository, MeterRegistry meterRegistry) {
         this.userRepository = userRepository;
         this.passwordEncoder = new BCryptPasswordEncoder();
+        this.meterRegistry = meterRegistry;
+
+        // 初始化自定义指标
+        this.userCreatedCounter = Counter.builder("users.created")
+                .description("用户创建数量")
+                .tag("service", "user-service")
+                .register(meterRegistry);
+
+        this.userDeletedCounter = Counter.builder("users.deleted")
+                .description("用户删除数量")
+                .tag("service", "user-service")
+                .register(meterRegistry);
+
+        this.authSuccessCounter = Counter.builder("auth.success")
+                .description("认证成功次数")
+                .tag("service", "user-service")
+                .register(meterRegistry);
+
+        this.authFailureCounter = Counter.builder("auth.failure")
+                .description("认证失败次数")
+                .tag("service", "user-service")
+                .register(meterRegistry);
+
+        this.userQueryTimer = Timer.builder("users.query.time")
+                .description("用户查询耗时")
+                .tag("service", "user-service")
+                .register(meterRegistry);
     }
 
     /**
@@ -62,7 +100,7 @@ public class UserService {
      * 根据ID查找用户
      */
     public Optional<User> findById(Long id) {
-        return userRepository.findById(id);
+        return userQueryTimer.record(() -> userRepository.findById(id));
     }
 
     /**
@@ -84,7 +122,12 @@ public class UserService {
             user.setPassword(passwordEncoder.encode(user.getPassword()));
         }
 
-        return userRepository.save(user);
+        User savedUser = userRepository.save(user);
+
+        // 增加用户创建计数
+        userCreatedCounter.increment();
+
+        return savedUser;
     }
 
     /**
@@ -111,6 +154,10 @@ public class UserService {
             throw new ResourceNotFoundException("User", id);
         }
         userRepository.deleteById(id);
+
+        // 增加用户删除计数
+        userDeletedCounter.increment();
+
         return true;
     }
 
@@ -131,6 +178,8 @@ public class UserService {
         Optional<User> userOpt = userRepository.findByUsername(username);
 
         if (userOpt.isEmpty()) {
+            // 认证失败计数
+            authFailureCounter.increment();
             return null;
         }
 
@@ -138,9 +187,13 @@ public class UserService {
 
         // 验证密码
         if (passwordEncoder.matches(password, user.getPassword())) {
+            // 认证成功计数
+            authSuccessCounter.increment();
             return user;
         }
 
+        // 认证失败计数
+        authFailureCounter.increment();
         return null;
     }
 }

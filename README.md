@@ -2,18 +2,21 @@
 
 这是将单体todo应用拆分为微服务架构的实践项目，集成了Nacos服务注册与发现。
 
-**当前版本**: 2.2.0
-**主要特性**: API Gateway统一入口、JWT身份认证、OpenFeign声明式客户端、LoadBalancer负载均衡、Resilience4j熔断与重试、Nacos Config配置中心、动态配置刷新、RabbitMQ异步消息通信
+**当前版本**: 2.3.0
+**主要特性**: API Gateway统一入口、JWT身份认证、OpenFeign声明式客户端、LoadBalancer负载均衡、Resilience4j熔断与重试、Nacos Config配置中心、动态配置刷新、RabbitMQ异步消息通信、Prometheus监控、Grafana可视化、Zipkin链路追踪
 
 ## 📋 项目说明
 
-本项目将单体todo应用拆分为微服务架构,并使用Spring Cloud Gateway作为统一入口，通过JWT实现身份认证，通过RabbitMQ实现服务间异步通信：
+本项目将单体todo应用拆分为微服务架构,并使用Spring Cloud Gateway作为统一入口，通过JWT实现身份认证，通过RabbitMQ实现服务间异步通信，通过Prometheus + Grafana实现监控，通过Zipkin实现分布式链路追踪：
 
 - **gateway-service** (API网关) - 端口 9000, 统一入口和JWT认证
 - **user-service** (用户服务) - 端口 8081, 数据库 user_db
 - **todo-service** (待办事项服务) - 端口 8082, 数据库 todo_db
 - **nacos** (服务注册中心) - 端口 8848
 - **rabbitmq** (消息队列) - 端口 5672 (AMQP), 15672 (管理界面)
+- **zipkin** (链路追踪) - 端口 9411
+- **prometheus** (监控系统) - 端口 9090
+- **grafana** (可视化平台) - 端口 3000
 
 ## 🏗️ 架构图
 
@@ -48,6 +51,20 @@
   │   user_db     │              │   todo_db     │
   │   (MySQL)     │              │   (MySQL)     │
   └───────────────┘              └───────────────┘
+
+┌──────────────────────────── 监控与追踪 ─────────────────────────┐
+│                                                                 │
+│  ┌───────────┐     ┌────────────┐     ┌───────────┐            │
+│  │  Zipkin   │     │ Prometheus │     │  Grafana  │            │
+│  │   :9411   │     │    :9090   │────▶│   :3000   │            │
+│  └─────▲─────┘     └─────▲──────┘     └───────────┘            │
+│        │                 │                                      │
+│        │ Traces          │ Metrics                              │
+│        │                 │                                      │
+│  ┌─────┴─────────────────┴──────────────────┐                  │
+│  │     所有微服务 (Actuator + Micrometer)    │                  │
+│  └───────────────────────────────────────────┘                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ## 🚀 快速开始
@@ -324,6 +341,11 @@ curl -X POST http://localhost:9000/api/todos \
 - **RabbitMQ** 3-management - 异步消息队列，服务解耦
 - **Spring AMQP** - RabbitMQ客户端，消息收发
 - **Spring Boot Actuator** - 健康检查和监控端点
+- **Micrometer** - 应用指标收集框架
+- **Prometheus** - 时序数据库，指标采集和存储
+- **Grafana** - 可视化平台，监控Dashboard
+- **Zipkin** - 分布式链路追踪系统
+- **Micrometer Tracing** - 分布式追踪抽象层（替代Sleuth）
 - **OpenFeign** - 声明式HTTP客户端，服务间通信
 - **Spring Cloud LoadBalancer** - 客户端负载均衡
 - **Resilience4j** - 熔断器和重试机制
@@ -688,6 +710,145 @@ curl http://localhost:8081/actuator/health
 }
 ```
 
+## 📊 服务监控与链路追踪
+
+### Prometheus监控
+
+v2.3.0集成了Prometheus指标采集和Grafana可视化平台。
+
+#### 核心功能
+
+- **自动指标采集**：通过Actuator暴露Prometheus格式的指标
+- **自定义业务指标**：Counter（计数）、Timer（耗时）等
+- **JVM监控**：内存、GC、线程等系统指标
+- **HTTP请求监控**：QPS、响应时间、错误率
+
+#### 访问Prometheus
+
+```bash
+# 访问Prometheus UI
+open http://localhost:9090
+
+# 查询示例：用户创建总数
+users_created_total
+
+# 查询示例：HTTP请求平均响应时间
+rate(http_server_requests_seconds_sum[5m]) / rate(http_server_requests_seconds_count[5m])
+
+# 查询示例：JVM堆内存使用
+jvm_memory_used_bytes{area="heap"}
+```
+
+#### 访问Grafana
+
+```bash
+# 访问Grafana Dashboard
+open http://localhost:3000
+
+# 登录凭据
+# 用户名: admin
+# 密码: admin
+```
+
+预配置的Dashboard包含：
+
+- **服务健康概览**：用户创建数、Todo创建数、认证失败数
+- **JVM监控**：堆内存使用趋势
+- **HTTP性能**：平均响应时间
+
+#### 自定义业务指标示例
+
+```java
+// user-service 业务指标
+@Service
+public class UserService {
+    private final Counter userCreatedCounter;
+    private final Counter authSuccessCounter;
+    private final Counter authFailureCounter;
+    private final Timer userQueryTimer;
+
+    public UserService(MeterRegistry meterRegistry) {
+        // 用户创建计数器
+        this.userCreatedCounter = Counter.builder("users.created")
+                .description("用户创建数量")
+                .tag("service", "user-service")
+                .register(meterRegistry);
+
+        // 认证成功/失败计数器
+        this.authSuccessCounter = Counter.builder("auth.success")
+                .description("认证成功次数")
+                .register(meterRegistry);
+
+        // 用户查询耗时
+        this.userQueryTimer = Timer.builder("users.query.time")
+                .description("用户查询耗时")
+                .register(meterRegistry);
+    }
+}
+```
+
+### Zipkin链路追踪
+
+v2.3.0集成了Zipkin分布式链路追踪系统。
+
+#### 核心功能
+
+- **TraceId传播**：跨服务调用的全局唯一ID
+- **SpanId关联**：每个服务调用的唯一标识
+- **日志关联**：在日志中注入TraceId和SpanId
+- **依赖分析**：自动生成服务依赖关系图
+
+#### 访问Zipkin
+
+```bash
+# 访问Zipkin UI
+open http://localhost:9411
+
+# 查看调用链路
+# 1. 选择服务名（如todo-service）
+# 2. 点击"Find Traces"
+# 3. 点击某个trace查看详细调用链
+```
+
+#### 调用链路示例
+
+当创建Todo时，会产生如下调用链路：
+
+```
+TraceId: abc123def456...
+
+Span 1: [gateway-service] POST /api/todos (10ms)
+  └─ Span 2: [todo-service] POST /api/todos (8ms)
+       └─ Span 3: [user-service] GET /api/users/1 (3ms)
+```
+
+#### 日志中的TraceId
+
+服务日志自动包含TraceId和SpanId：
+
+```
+INFO [todo-service,abc123def456,span001] 创建Todo: 测试链路追踪
+INFO [user-service,abc123def456,span002] 查询用户: ID=1
+```
+
+#### 配置示例
+
+```yaml
+# application.yml
+management:
+  tracing:
+    sampling:
+      probability: 1.0  # 采样率100%（开发环境）
+
+  zipkin:
+    tracing:
+      endpoint: http://zipkin:9411/api/v2/spans
+
+logging:
+  pattern:
+    level: '%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]'
+```
+
 ## 🐛 常见问题
 
 ### Q1: 服务无法注册到Nacos？
@@ -731,7 +892,7 @@ cd ../todo-service
 
 ## 📝 下一步
 
-服务注册与发现、声明式客户端、熔断降级、API网关、JWT认证、配置中心、异步消息通信已完成，可以考虑以下改进：
+服务注册与发现、声明式客户端、熔断降级、API网关、JWT认证、配置中心、异步消息通信、服务监控与链路追踪已完成，可以考虑以下改进：
 
 1. ~~**服务注册与发现**：集成Nacos~~ ✅ 已完成（v1.0.0）
 2. ~~**声明式客户端**：使用OpenFeign替代RestTemplate~~ ✅ 已完成（v1.2.0）
@@ -740,8 +901,9 @@ cd ../todo-service
 5. ~~**JWT认证**：实现基于Token的身份认证~~ ✅ 已完成（v2.0.0）
 6. ~~**配置中心**：使用Nacos Config集中管理配置~~ ✅ 已完成（v2.1.0）
 7. **异步消息通信**：集成RabbitMQ实现服务解耦 🔧 部分完成（v2.2.0，见已知问题）
-8. **链路追踪**：集成Sleuth和Zipkin
-9. **服务监控**：集成Prometheus和Grafana
+8. ~~**服务监控**：集成Prometheus和Grafana~~ ✅ 已完成（v2.3.0）
+9. ~~**链路追踪**：集成Zipkin~~ ✅ 已完成（v2.3.0）
+10. **容器编排**：使用Kubernetes部署微服务
 
 ## 🐞 已知问题
 

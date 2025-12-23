@@ -82,7 +82,7 @@ pull_image() {
 # 显示帮助信息
 show_help() {
     cat << EOF
-Todo 微服务项目运行脚本 v2.2.0
+Todo 微服务项目运行脚本 v2.3.0
 
 用法: ./run.sh [选项]
 
@@ -156,6 +156,21 @@ download_images() {
     # 检查并下载RabbitMQ镜像
     if ! check_image "rabbitmq:3-management"; then
         pull_image "m.daocloud.io/docker.io/library/rabbitmq:3-management" "rabbitmq:3-management"
+    fi
+
+    # 检查并下载Zipkin镜像
+    if ! check_image "openzipkin/zipkin:latest"; then
+        pull_image "m.daocloud.io/docker.io/openzipkin/zipkin:latest" "openzipkin/zipkin:latest"
+    fi
+
+    # 检查并下载Prometheus镜像
+    if ! check_image "prom/prometheus:latest"; then
+        pull_image "m.daocloud.io/docker.io/prom/prometheus:latest" "prom/prometheus:latest"
+    fi
+
+    # 检查并下载Grafana镜像
+    if ! check_image "grafana/grafana:latest"; then
+        pull_image "m.daocloud.io/docker.io/grafana/grafana:latest" "grafana/grafana:latest"
     fi
 
     print_success "所有镜像准备完成"
@@ -290,10 +305,29 @@ show_info() {
     echo -e "  AMQP端口: 5672"
     echo ""
 
+    echo -e "${CYAN}Zipkin 链路追踪:${NC}"
+    echo -e "  URL: http://localhost:9411"
+    echo -e "  功能: 分布式链路追踪和依赖分析"
+    echo ""
+
+    echo -e "${CYAN}Prometheus 监控:${NC}"
+    echo -e "  URL: http://localhost:9090"
+    echo -e "  功能: 时序数据库和指标收集"
+    echo ""
+
+    echo -e "${CYAN}Grafana 可视化:${NC}"
+    echo -e "  URL: http://localhost:3000"
+    echo -e "  用户名: admin"
+    echo -e "  密码: admin"
+    echo -e "  Dashboard: Todo微服务监控Dashboard"
+    echo ""
+
     echo -e "${CYAN}下一步:${NC}"
     echo -e "  1. 运行测试: ${GREEN}./test-services.sh${NC}"
     echo -e "  2. 查看日志: ${GREEN}./run.sh logs${NC}"
     echo -e "  3. 访问 Nacos 控制台查看配置和服务注册"
+    echo -e "  4. 访问 Zipkin 查看服务调用链路追踪"
+    echo -e "  5. 访问 Grafana 查看服务监控Dashboard"
 
     print_separator
 }

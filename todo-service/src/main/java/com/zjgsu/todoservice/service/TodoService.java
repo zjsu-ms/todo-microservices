@@ -6,6 +6,9 @@ import com.zjgsu.todoservice.exception.ResourceNotFoundException;
 import com.zjgsu.todoservice.messaging.TodoEventProducer;
 import com.zjgsu.todoservice.model.Todo;
 import com.zjgsu.todoservice.repository.TodoRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,11 +32,41 @@ public class TodoService {
     private final TodoRepository todoRepository;
     private final UserClient userClient;
     private final TodoEventProducer todoEventProducer;
+    private final MeterRegistry meterRegistry;
 
-    public TodoService(TodoRepository todoRepository, UserClient userClient, TodoEventProducer todoEventProducer) {
+    // 自定义业务指标
+    private final Counter todoCreatedCounter;
+    private final Counter todoDeletedCounter;
+    private final Counter todoCompletedCounter;
+    private final Timer todoProcessingTimer;
+
+    public TodoService(TodoRepository todoRepository, UserClient userClient,
+                      TodoEventProducer todoEventProducer, MeterRegistry meterRegistry) {
         this.todoRepository = todoRepository;
         this.userClient = userClient;
         this.todoEventProducer = todoEventProducer;
+        this.meterRegistry = meterRegistry;
+
+        // 初始化自定义指标
+        this.todoCreatedCounter = Counter.builder("todos.created")
+                .description("Todo创建数量")
+                .tag("service", "todo-service")
+                .register(meterRegistry);
+
+        this.todoDeletedCounter = Counter.builder("todos.deleted")
+                .description("Todo删除数量")
+                .tag("service", "todo-service")
+                .register(meterRegistry);
+
+        this.todoCompletedCounter = Counter.builder("todos.completed")
+                .description("Todo完成数量")
+                .tag("service", "todo-service")
+                .register(meterRegistry);
+
+        this.todoProcessingTimer = Timer.builder("todos.processing.time")
+                .description("Todo处理耗时")
+                .tag("service", "todo-service")
+                .register(meterRegistry);
     }
 
     /**
@@ -74,23 +107,28 @@ public class TodoService {
      */
     @Transactional
     public Todo createTodo(Todo todo) {
-        // 调用用户服务验证用户是否存在
-        if (todo.getUserId() != null) {
-            verifyUserExists(todo.getUserId());
-        }
-        Todo savedTodo = todoRepository.save(todo);
+        return todoProcessingTimer.record(() -> {
+            // 调用用户服务验证用户是否存在
+            if (todo.getUserId() != null) {
+                verifyUserExists(todo.getUserId());
+            }
+            Todo savedTodo = todoRepository.save(todo);
 
-        // 发送todo创建事件
-        TodoEventMessage message = new TodoEventMessage(
-            savedTodo.getId(),
-            savedTodo.getTitle(),
-            savedTodo.getDescription(),
-            savedTodo.getUserId(),
-            "created"
-        );
-        todoEventProducer.sendTodoCreatedEvent(message);
+            // 增加todo创建计数
+            todoCreatedCounter.increment();
 
-        return savedTodo;
+            // 发送todo创建事件
+            TodoEventMessage message = new TodoEventMessage(
+                savedTodo.getId(),
+                savedTodo.getTitle(),
+                savedTodo.getDescription(),
+                savedTodo.getUserId(),
+                "created"
+            );
+            todoEventProducer.sendTodoCreatedEvent(message);
+
+            return savedTodo;
+        });
     }
 
     /**
@@ -141,6 +179,9 @@ public class TodoService {
 
         todoRepository.deleteById(id);
 
+        // 增加todo删除计数
+        todoDeletedCounter.increment();
+
         // 发送todo删除事件
         TodoEventMessage message = new TodoEventMessage(
             todo.getId(),
@@ -163,6 +204,11 @@ public class TodoService {
                 .orElseThrow(() -> new ResourceNotFoundException("Todo", id));
         todo.setCompleted(!todo.getCompleted());
         Todo toggledTodo = todoRepository.save(todo);
+
+        // 如果切换为完成状态，增加完成计数
+        if (toggledTodo.getCompleted()) {
+            todoCompletedCounter.increment();
+        }
 
         // 发送todo状态切换事件
         TodoEventMessage message = new TodoEventMessage(

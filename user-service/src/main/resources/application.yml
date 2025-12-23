@@ -32,7 +32,33 @@ jwt:
   secret: your-256-bit-secret-key-here-must-be-long-enough-for-HS512-algorithm
   expiration: 86400000  # 24小时(毫秒)
 
+# Actuator配置 - 暴露监控端点
+management:
+  endpoints:
+    web:
+      exposure:
+        include: '*'  # 暴露所有端点
+  metrics:
+    export:
+      prometheus:
+        enabled: true  # 启用Prometheus
+  endpoint:
+    prometheus:
+      enabled: true
+    health:
+      show-details: always  # 显示健康检查详情
+
+# 分布式链路追踪配置
+management.tracing:
+  sampling:
+    probability: 1.0  # 采样率100%(开发环境)
+
+management.zipkin.tracing:
+  endpoint: http://localhost:9411/api/v2/spans  # Zipkin服务器地址
+
 logging:
   level:
     com.zjgsu.user: INFO
     org.springframework.web: INFO
+  pattern:
+    level: '%5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}]'  # 日志中包含TraceId和SpanId

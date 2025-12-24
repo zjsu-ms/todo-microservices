@@ -2,13 +2,25 @@ spring:
   application:
     name: user-service
 
+  config:
+    import:
+      - optional:nacos:user-service-prod.yaml?group=DEFAULT_GROUP&refresh=true
+
   cloud:
     compatibility-verifier:
       enabled: false
     nacos:
+      server-addr: ${NACOS_SERVER_ADDR:nacos:8848}
+      namespace: ${NACOS_NAMESPACE:dev}
+      config:
+        server-addr: ${NACOS_SERVER_ADDR:nacos:8848}
+        namespace: ${NACOS_NAMESPACE:dev}
+        file-extension: yaml
+        group: DEFAULT_GROUP
+        refresh-enabled: true
       discovery:
         server-addr: ${NACOS_SERVER_ADDR:nacos:8848}
-        namespace: ${NACOS_NAMESPACE:}
+        namespace: ${NACOS_NAMESPACE:dev}
         group: ${NACOS_GROUP:DEFAULT_GROUP}
 
   datasource:
@@ -21,6 +33,20 @@ spring:
       ddl-auto: update
     show-sql: false
 
+# Actuator配置 - 启用配置刷新
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,refresh,env
+  endpoint:
+    health:
+      show-details: always
+    refresh:
+      enabled: true
+
 logging:
   level:
-    com.zjgsu.user: WARN
+    com.zjgsu.user: INFO
+    com.alibaba.nacos: INFO
+    org.springframework.cloud.context: DEBUG

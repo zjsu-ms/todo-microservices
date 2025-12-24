@@ -2,14 +2,32 @@ spring:
   application:
     name: todo-service
 
+  # 🔑 配置导入 - Spring Cloud 2025.0.0
+  config:
+    import:
+      - optional:nacos:todo-service-prod.yaml?group=DEFAULT_GROUP&refresh=true
+
   cloud:
     compatibility-verifier:
       enabled: false
     nacos:
+      # Nacos 服务器地址
+      server-addr: ${NACOS_SERVER_ADDR:nacos:8848}
+      namespace: ${NACOS_NAMESPACE:dev}
+
+      # 配置中心设置
+      config:
+        server-addr: ${NACOS_SERVER_ADDR:nacos:8848}
+        namespace: ${NACOS_NAMESPACE:dev}
+        file-extension: yaml
+        group: DEFAULT_GROUP
+        refresh-enabled: true
+
+      # 服务发现设置
       discovery:
         server-addr: ${NACOS_SERVER_ADDR:nacos:8848}
-        namespace: ${NACOS_NAMESPACE:}
-        group: ${NACOS_GROUP:DEFAULT_GROUP}
+        namespace: ${NACOS_NAMESPACE:dev}
+        group: DEFAULT_GROUP
 
   datasource:
     url: ${DB_URL:jdbc:mysql://todo-db:3306/todo_db?useSSL=false&serverTimezone=UTC}
@@ -23,4 +41,18 @@ spring:
 
 logging:
   level:
-    com.zjgsu.todoservice: WARN
+    com.zjgsu.todoservice: INFO
+    com.alibaba.nacos: INFO
+    org.springframework.cloud.context: DEBUG
+
+# Actuator 配置 - 启用配置刷新端点
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,refresh,env
+  endpoint:
+    health:
+      show-details: always
+    refresh:
+      enabled: true
